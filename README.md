@@ -17,7 +17,10 @@ running, which one is blocked waiting on you, and a terminal to answer it in.
   Drag to scroll, one-tap key row, image upload.
 - **Workspaces and tabs** — create, rename, close, and open them, including
   tabs running a plain shell with no agent.
-- **Ports** — forward a port and open it in the phone's browser.
+- **Ports** — forward a port and open it in the phone's browser. A foreground
+  service holds the tunnel open while you are in another app; Android freezes
+  a backgrounded process within seconds and the forward would otherwise stop
+  answering.
 - **SSH profiles** — key or password, host keys pinned on first use.
 
 ## Requirements

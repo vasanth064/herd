@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import 'forward_service.dart';
 import 'herdr.dart';
 import 'models.dart';
 import 'store.dart';
@@ -28,6 +29,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _retry;
   int _backoffMs = 1000;
   bool _foreground = true;
+
+  /// A forward the user still expects to work. Reconnects keep running in the
+  /// background for these — the browser they switched to is the whole point.
+  bool _forwardsWanted = false;
 
   /// Set by the UI to answer a first-time host key prompt.
   Future<bool> Function(String hostPort, String fingerprint)? hostKeyPrompt;
@@ -110,6 +115,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     agents = [];
     notifyListeners();
 
+    // The old connection owns the listening sockets for its forwards. Dropping
+    // it without closing leaves them bound, so every auto-started forward on
+    // the new connection fails with "address already in use".
+    await conn?.close();
+    conn = null;
+
     final c = _build(p);
     try {
       await c.connect(
@@ -149,6 +160,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     sessions = [];
     state = ConnState.disconnected;
     error = null;
+    unawaited(setForwardService(const []));
     notifyListeners();
   }
 
@@ -164,14 +176,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _retry?.cancel();
     _retry = Timer(Duration(milliseconds: _backoffMs), () {
       _backoffMs = min(_backoffMs * 2, 30000);
-      if (_foreground) connect(p);
+      if (_foreground || _forwardsWanted) connect(p);
     });
   }
 
-  void _startPolling() {
+  void _startPolling({int? ms}) {
     _poll?.cancel();
-    final ms = active?.pollMs ?? 2000;
-    _poll = Timer.periodic(Duration(milliseconds: ms), (_) => refresh());
+    final every = ms ?? active?.pollMs ?? 2000;
+    _poll = Timer.periodic(Duration(milliseconds: every), (_) => refresh());
   }
 
   Future<void> refresh() async {
@@ -219,9 +231,18 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   bool forwardActive(ForwardRule r) => conn?.forwardActive(r) ?? false;
 
+  void _syncForwardService() {
+    final ports =
+        active?.forwards.where(forwardActive).map((f) => f.port).toList() ??
+            const <int>[];
+    _forwardsWanted = ports.isNotEmpty;
+    unawaited(setForwardService(ports));
+  }
+
   Future<String?> startForward(ForwardRule r) async {
     try {
       await conn?.startForward(r);
+      _syncForwardService();
       notifyListeners();
       return null;
     } catch (e) {
@@ -231,6 +252,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> stopForward(ForwardRule r) async {
     await conn?.stopForward(r);
+    _syncForwardService();
     notifyListeners();
   }
 
@@ -250,8 +272,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       }
     } else if (state == AppLifecycleState.paused) {
       _foreground = false;
-      _poll?.cancel();
-      _retry?.cancel();
+      if (_forwardsWanted) {
+        // refresh() is what notices a dropped link and schedules the retry;
+        // with no heartbeat a forward dies silently while the user browses.
+        _startPolling(ms: 15000);
+      } else {
+        _poll?.cancel();
+        _retry?.cancel();
+      }
     }
   }
 }
