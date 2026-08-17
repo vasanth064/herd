@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Three agent rows, each with its status dot: the app's home screen.
+     Content stays inside the 66dp adaptive-icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#000000"
+        android:pathData="M34,36m-4.5,0a4.5,4.5 0,1 1,9 0a4.5,4.5 0,1 1,-9 0" />
+    <path
+        android:fillColor="#000000"
+        android:pathData="M45,32.5h30a3.5,3.5 0,0 1,0 7h-30a3.5,3.5 0,0 1,0 -7z" />
+
+    <path
+        android:fillColor="#000000"
+        android:pathData="M34,54m-4.5,0a4.5,4.5 0,1 1,9 0a4.5,4.5 0,1 1,-9 0" />
+    <path
+        android:fillColor="#000000"
+        android:pathData="M45,50.5h24a3.5,3.5 0,0 1,0 7h-24a3.5,3.5 0,0 1,0 -7z" />
+
+    <path
+        android:fillColor="#000000"
+        android:pathData="M34,72m-4.5,0a4.5,4.5 0,1 1,9 0a4.5,4.5 0,1 1,-9 0" />
+    <path
+        android:fillColor="#000000"
+        android:pathData="M45,68.5h30a3.5,3.5 0,0 1,0 7h-30a3.5,3.5 0,0 1,0 -7z" />
+</vector>
