@@ -47,6 +47,23 @@ class HerdrNotFoundException implements Exception {
           'usually ~/.local/bin/herdr.';
 }
 
+/// A keyboard-interactive challenge. Tailscale SSH uses one with no prompts at
+/// all to hand over a browser check URL, which is why this cannot just be a
+/// password box.
+class AuthChallenge {
+  final String name;
+  final String instruction;
+
+  /// (prompt text, echo the typed characters).
+  final List<(String, bool)> prompts;
+
+  const AuthChallenge(this.name, this.instruction, this.prompts);
+
+  static final _url = RegExp(r'https?://\S+');
+
+  String? get url => _url.firstMatch('$instruction $name')?.group(0);
+}
+
 enum ConnState { disconnected, connecting, connected, failed }
 
 /// Owns one SSH connection and speaks `herdr` over it.
@@ -60,13 +77,19 @@ class HerdrConnection {
   /// Returns the stored fingerprint for a host, or null if unknown.
   final String? Function(String hostPort) knownFingerprint;
 
+  /// Answers a keyboard-interactive challenge. Returning null aborts.
+  final Future<List<String>?> Function(AuthChallenge)? onChallenge;
+
   SSHClient? _client;
   SftpClient? _sftp;
   HostKeyChangedException? _mismatch;
+  String? _banner;
   final Map<String, ServerSocket> _forwards = {};
 
   HerdrConnection(this.profile,
-      {required this.onNewHost, required this.knownFingerprint});
+      {required this.onNewHost,
+      required this.knownFingerprint,
+      this.onChallenge});
 
   bool get isConnected => _client != null && _client!.isClosed == false;
 
@@ -101,6 +124,19 @@ class HerdrConnection {
       identities: identities,
       onPasswordRequest:
           profile.auth == AuthMethod.password ? () => secret ?? '' : null,
+      // dartssh2 only offers keyboard-interactive when this is set. Without it
+      // a Tailscale SSH host never gets to send its browser check and the
+      // handshake simply stalls until the socket gives up.
+      onUserInfoRequest: (req) async {
+        final answer = await onChallenge?.call(AuthChallenge(
+          req.name,
+          req.instruction,
+          [for (final p in req.prompts) (p.promptText, p.echo)],
+        ));
+        if (answer != null) return answer;
+        return req.prompts.isEmpty ? const <String>[] : null;
+      },
+      onUserauthBanner: (message) => _banner = message.trim(),
       // Throwing from inside this callback does not propagate — dartssh2 just
       // tears the transport down and the caller sees a generic "connection
       // closed", which would make a swapped host key look like a network blip.
@@ -124,8 +160,11 @@ class HerdrConnection {
         _mismatch = null;
         throw m;
       }
-      if (e is SSHAuthAbortError) throw AuthException(e.message);
-      if (e is SSHAuthFailError) throw AuthException(e.message);
+      // The server's own banner says far more than "auth failed" — Tailscale
+      // puts the reason it rejected you there.
+      final why = _banner?.isNotEmpty == true ? '\n\n$_banner' : '';
+      if (e is SSHAuthAbortError) throw AuthException('${e.message}$why');
+      if (e is SSHAuthFailError) throw AuthException('${e.message}$why');
       rethrow;
     }
     _client = client;
@@ -354,6 +393,46 @@ class HerdrConnection {
   /// alternate-screen history can only be captured by scrolling while idle.
   /// Without it the read succeeds in either state. Pass a count only when
   /// deliberately pulling deeper history, and be ready for that error.
+  /// What the agent is actually asking, for a notification. The pane title is
+  /// the session's overall task, which says nothing about the pending question.
+  Future<String?> agentQuestion(String target) async {
+    try {
+      final raw = await _run([
+        'agent',
+        'read',
+        target,
+        '--source',
+        'recent',
+        '--lines',
+        '24',
+        '--format',
+        'text',
+      ]);
+      final text = plainText(raw);
+      return text.isEmpty ? null : text;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static final _ansi = RegExp(r'\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b\[[0-9;?]*'
+      r'[ -/]*[@-~]|\x1b[@-Z\\-_]');
+  static final _boxDrawing = RegExp(r'[─-╿]');
+
+  /// Strips escapes and the box-drawing frame agents render prompts inside, so
+  /// a notification shows the question rather than a wall of line art.
+  static String plainText(String raw, {int keepLines = 10}) {
+    final lines = raw
+        .replaceAll(_ansi, '')
+        .replaceAll(_boxDrawing, ' ')
+        .split('\n')
+        .map((l) => l.replaceAll(RegExp(r'\s+'), ' ').trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+    return lines.sublist(lines.length > keepLines ? lines.length - keepLines : 0)
+        .join('\n');
+  }
+
   Future<String> readAgent(String target, {int? lines}) => _run([
         'agent',
         'read',
@@ -396,16 +475,22 @@ class HerdrConnection {
   /// `agent attach` deliberately is not used here: it streams a pane without
   /// registering as a client, so the pane keeps its desktop geometry and the
   /// output still has to be re-wrapped.
+  Future<void> focusPane(String paneId) async {
+    final res = await _json(['pane', 'get', paneId]);
+    final tab = (res['pane'] as Map<String, dynamic>?)?['tab_id'] as String?;
+    if (tab == null) throw HerdrException('Pane $paneId has no tab.');
+    await _run(['tab', 'focus', tab]);
+  }
+
   Future<SSHSession> attachAgent(
     String target, {
     required int cols,
     required int rows,
   }) async {
-    // Open the TUI where the user tapped. `pane focus` rather than
-    // `agent focus`: a tab running a plain shell has a pane but no agent.
-    try {
-      await _run(['pane', 'focus', target]);
-    } catch (_) {}
+    // Open the TUI where the user tapped. `tab focus` moves the workspace, the
+    // tab and the pane in one call; `pane focus` is direction-based and takes
+    // no target, and `agent focus` misses a tab running a plain shell.
+    await focusPane(target);
     return _need.execute(
       _cmd([]),
       pty: SSHPtyConfig(type: 'xterm-256color', width: cols, height: rows),

@@ -3,9 +3,9 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
-import 'forward_service.dart';
 import 'herdr.dart';
 import 'models.dart';
+import 'native.dart';
 import 'store.dart';
 
 class AppState extends ChangeNotifier with WidgetsBindingObserver {
@@ -28,14 +28,23 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _poll;
   Timer? _retry;
   int _backoffMs = 1000;
-  bool _foreground = true;
 
-  /// A forward the user still expects to work. Reconnects keep running in the
-  /// background for these — the browser they switched to is the whole point.
-  bool _forwardsWanted = false;
+  /// Last seen status per pane, so only transitions raise a notification.
+  final Map<String, AgentStatus> _seen = {};
+  bool _seeded = false;
+
+  /// Notification actions that arrived before there was a connection to run
+  /// them on — a tap can land while the app is still starting up.
+  final List<NotificationAction> _pending = [];
+  bool _lostNotified = false;
+
+  static const _connKey = 'connection';
 
   /// Set by the UI to answer a first-time host key prompt.
   Future<bool> Function(String hostPort, String fingerprint)? hostKeyPrompt;
+
+  /// Set by the UI to answer a keyboard-interactive challenge.
+  Future<List<String>?> Function(AuthChallenge)? challengePrompt;
 
   AppState(this.store) {
     profiles = store.loadProfiles();
@@ -47,6 +56,20 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
             ? ThemeMode.system
             : ThemeMode.dark;
     WidgetsBinding.instance.addObserver(this);
+    Native.listen();
+    Native.onWake = () => unawaited(drainActions());
+    unawaited(resumeLast());
+  }
+
+  /// Android can restart the process with no activity at all — from a
+  /// notification action, or after reclaiming memory. Nothing else calls
+  /// connect() in that case, so reconnect here or the app comes back inert.
+  Future<void> resumeLast() async {
+    if (active != null) return;
+    final id = store.lastProfileId();
+    if (id == null) return;
+    final p = profiles.where((x) => x.id == id).firstOrNull;
+    if (p != null) await connect(p);
   }
 
   @override
@@ -104,6 +127,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           }
           return ok;
         },
+        onChallenge: (c) async => challengePrompt?.call(c),
       );
 
   Future<void> connect(Profile p) async {
@@ -134,11 +158,16 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         await store.saveProfiles(profiles);
       }
       state = ConnState.connected;
+      _lostNotified = false;
+      unawaited(store.setLastProfileId(p.id));
+      unawaited(Native.cancel(_connKey));
+      _syncService();
       notifyListeners();
       for (final f in p.forwards.where((f) => f.autoStart)) {
         unawaited(startForward(f));
       }
       await refresh();
+      await drainActions();
       _startPolling();
     } catch (e) {
       await c.close();
@@ -160,7 +189,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     sessions = [];
     state = ConnState.disconnected;
     error = null;
-    unawaited(setForwardService(const []));
+    _seen.clear();
+    _seeded = false;
+    unawaited(store.setLastProfileId(null));
+    unawaited(Native.stopService());
+    unawaited(Native.cancel(_connKey));
     notifyListeners();
   }
 
@@ -173,10 +206,18 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         (error!.contains('Host key') || error!.contains('key changed'))) {
       return;
     }
+    if (!_lostNotified) {
+      _lostNotified = true;
+      unawaited(Native.notify(
+        pane: _connKey,
+        title: 'Herd lost its connection',
+        text: 'Agents and forwarded ports are unreachable. Retrying…',
+      ));
+    }
     _retry?.cancel();
     _retry = Timer(Duration(milliseconds: _backoffMs), () {
       _backoffMs = min(_backoffMs * 2, 30000);
-      if (_foreground || _forwardsWanted) connect(p);
+      connect(p);
     });
   }
 
@@ -198,6 +239,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
               next[i].status == agents[i].status &&
               next[i].revision == agents[i].revision &&
               next[i].title == agents[i].title);
+      await _notifyStatusChanges(next);
       agents = next;
       lastPoll = DateTime.now();
       final wasStale = pollStale;
@@ -231,18 +273,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   bool forwardActive(ForwardRule r) => conn?.forwardActive(r) ?? false;
 
-  void _syncForwardService() {
-    final ports =
-        active?.forwards.where(forwardActive).map((f) => f.port).toList() ??
-            const <int>[];
-    _forwardsWanted = ports.isNotEmpty;
-    unawaited(setForwardService(ports));
-  }
-
   Future<String?> startForward(ForwardRule r) async {
     try {
       await conn?.startForward(r);
-      _syncForwardService();
+      _syncService();
       notifyListeners();
       return null;
     } catch (e) {
@@ -252,8 +286,88 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> stopForward(ForwardRule r) async {
     await conn?.stopForward(r);
-    _syncForwardService();
+    _syncService();
     notifyListeners();
+  }
+
+  // ---- background service and notifications -------------------------------
+
+  /// The service runs for the whole connection, not just for forwards: a
+  /// blocked agent has to reach the user while the app is closed too.
+  void _syncService() {
+    final p = active;
+    if (p == null || state == ConnState.disconnected) {
+      unawaited(Native.stopService());
+      return;
+    }
+    final ports = p.forwards.where(forwardActive).map((f) => f.port).toList();
+    final where = ports.isEmpty ? p.name : '${p.name} · ${ports.join(', ')}';
+    unawaited(Native.startService(where));
+  }
+
+  Future<void> _notifyStatusChanges(List<AgentInfo> next) async {
+    final live = <String>{};
+    // The first snapshot of a connection is history, not news: an agent that
+    // finished hours ago is still `done`, and announcing it reads as the app
+    // shouting about old work every time it reconnects.
+    final seeding = !_seeded;
+    _seeded = true;
+
+    for (final a in next) {
+      live.add(a.paneId);
+      final was = _seen[a.paneId];
+      _seen[a.paneId] = a.status;
+      if (seeding || was == a.status) continue;
+      switch (a.status) {
+        case AgentStatus.blocked:
+          final question = await conn?.agentQuestion(a.paneId);
+          unawaited(Native.notify(
+            pane: a.paneId,
+            title: '${a.agent} is waiting · ${a.repo}',
+            text: question ?? 'Waiting on your input.',
+            keys: const ['1', '2', 'esc'],
+            reply: true,
+          ));
+        case AgentStatus.done:
+          unawaited(Native.notify(
+            pane: a.paneId,
+            title: '${a.agent} finished · ${a.repo}',
+            text: a.title.isEmpty ? 'Task complete.' : a.title,
+            reply: true,
+          ));
+        default:
+          if (was == AgentStatus.blocked || was == AgentStatus.done) {
+            unawaited(Native.cancel(a.paneId));
+          }
+      }
+    }
+    _seen.removeWhere((pane, _) => !live.contains(pane));
+  }
+
+  /// Runs whatever the user tapped on a notification. Anything that arrives
+  /// without a connection is held rather than dropped — a swallowed keypress on
+  /// a permission prompt looks exactly like the app ignoring them.
+  Future<void> drainActions() async {
+    final c = conn;
+    // Leave them in the host queue until there is somewhere to send them:
+    // taking them into a Dart list would lose them if the process dies first.
+    if (c == null) return;
+    _pending.addAll(await Native.takeActions());
+    if (_pending.isEmpty) return;
+    final todo = List.of(_pending);
+    _pending.clear();
+    for (final a in todo) {
+      try {
+        if (a.kind == 'text') {
+          await c.prompt(a.pane, a.value);
+        } else {
+          await c.sendKeys(a.pane, [a.value]);
+        }
+      } catch (_) {
+        _pending.add(a);
+      }
+    }
+    await refresh();
   }
 
   // ---- lifecycle ----------------------------------------------------------
@@ -261,7 +375,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _foreground = true;
       final p = active;
       if (p != null && !(conn?.isConnected ?? false)) {
         _backoffMs = 1000;
@@ -271,14 +384,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         refresh();
       }
     } else if (state == AppLifecycleState.paused) {
-      _foreground = false;
-      if (_forwardsWanted) {
-        // refresh() is what notices a dropped link and schedules the retry;
-        // with no heartbeat a forward dies silently while the user browses.
-        _startPolling(ms: 15000);
-      } else {
+      if (active == null) {
         _poll?.cancel();
         _retry?.cancel();
+      } else {
+        // Slower, but it must keep running: refresh() is what notices both a
+        // dropped link and an agent that started waiting on the user.
+        _startPolling(ms: 10000);
       }
     }
   }

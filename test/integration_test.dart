@@ -116,6 +116,18 @@ void main() {
     expect(text.trimLeft().startsWith('{'), isFalse);
   }, skip: missing ? 'test sshd not running' : null);
 
+  // `herdr pane focus` is direction-based and takes no target, so the obvious
+  // call silently did nothing and every tap opened whatever herdr had focused.
+  test('focusing a pane moves the workspace with it', () async {
+    profile.sessionName = 'default';
+    final before = await conn.workspaces();
+    final elsewhere = before.firstWhere((w) => !w.focused);
+    final panes = await conn.tabs(elsewhere.id);
+    await conn.focusPane(panes.firstWhere((t) => t.paneId != null).paneId!);
+    final after = await conn.workspaces();
+    expect(after.firstWhere((w) => w.id == elsewhere.id).focused, isTrue);
+  }, skip: missing ? 'test sshd not running' : null);
+
   test('surfaces a herdr error instead of hanging', () async {
     profile.sessionName = 'default';
     await expectLater(

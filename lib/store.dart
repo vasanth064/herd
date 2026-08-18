@@ -9,6 +9,7 @@ class Store {
   static const _profilesKey = 'profiles';
   static const _hostsKey = 'known_hosts';
   static const _themeKey = 'theme_mode';
+  static const _lastKey = 'last_profile';
 
   final SharedPreferences prefs;
   final FlutterSecureStorage secure;
@@ -38,6 +39,14 @@ class Store {
         _profilesKey,
         jsonEncode(profiles.map((p) => p.toJson()).toList()),
       );
+
+  /// The profile to reconnect to when Android restarts the process without
+  /// anyone opening the app — otherwise it comes back as a live isolate doing
+  /// nothing, and no agent alert ever fires.
+  String? lastProfileId() => prefs.getString(_lastKey);
+
+  Future<void> setLastProfileId(String? id) =>
+      id == null ? prefs.remove(_lastKey) : prefs.setString(_lastKey, id);
 
   Map<String, String> loadKnownHosts() {
     final raw = prefs.getString(_hostsKey);

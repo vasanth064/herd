@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../app_state.dart';
 import '../herdr.dart';
@@ -21,8 +22,84 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AppState>().hostKeyPrompt = _askHostKey;
+      context.read<AppState>()
+        ..hostKeyPrompt = _askHostKey
+        ..challengePrompt = _askChallenge;
     });
+  }
+
+  /// Tailscale SSH sends its browser check here, with no prompts at all — so
+  /// this has to be able to show a link and wait, not just collect a password.
+  Future<List<String>?> _askChallenge(AuthChallenge c) async {
+    if (!mounted) return null;
+    final controllers = [
+      for (final _ in c.prompts) TextEditingController(),
+    ];
+    final message = [c.name, c.instruction]
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .join('\n\n');
+    final url = c.url;
+
+    final answers = await showDialog<List<String>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialog) => AlertDialog(
+        title: const Text('The server needs something'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (message.isNotEmpty)
+                SelectableText(message, style: const TextStyle(fontSize: 13)),
+              if (url != null) ...[
+                const SizedBox(height: 12),
+                FilledButton.tonalIcon(
+                  onPressed: () => launchUrl(
+                    Uri.parse(url),
+                    mode: LaunchMode.externalApplication,
+                  ),
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  label: const Text('Open link'),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Finish there, then continue.',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ],
+              for (var i = 0; i < c.prompts.length; i++) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: controllers[i],
+                  obscureText: !c.prompts[i].$2,
+                  autofocus: i == 0,
+                  decoration: InputDecoration(labelText: c.prompts[i].$1.trim()),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(
+              dialog,
+              [for (final c in controllers) c.text],
+            ),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    for (final c in controllers) {
+      c.dispose();
+    }
+    return answers;
   }
 
   Future<bool> _askHostKey(String hostPort, String fingerprint) async {

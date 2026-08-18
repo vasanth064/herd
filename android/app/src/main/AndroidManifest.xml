@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="Herd"
-        android:name="${applicationName}"
+        android:name=".HerdApplication"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
@@ -32,13 +32,16 @@
             </intent-filter>
         </activity>
         <service
-            android:name=".ForwardService"
+            android:name=".HerdService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="ssh port forwarding"/>
+                android:value="ssh port forwarding and agent alerts"/>
         </service>
+        <receiver
+            android:name=".Notifications$ActionReceiver"
+            android:exported="false"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
