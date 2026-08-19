@@ -318,6 +318,11 @@ class _WorkspaceCardState extends State<_WorkspaceCard> {
 
   @override
   Widget build(BuildContext context) {
+    // A tab's own label is usually just its number; the agent running in it
+    // knows what the work is.
+    final byTab = {
+      for (final a in context.watch<AppState>().agents) a.tabId: a,
+    };
     return ExpansionTile(
       shape: const Border(),
       collapsedShape: const Border(),
@@ -393,9 +398,10 @@ class _WorkspaceCardState extends State<_WorkspaceCard> {
                 children: [
                   Flexible(
                     child: Text(
-                      t.label,
+                      byTab[t.id]?.title.isNotEmpty == true
+                          ? byTab[t.id]!.title
+                          : t.label,
                       style: TextStyle(
-                        fontFamily: mono,
                         fontSize: 13,
                         fontWeight:
                             t.focused ? FontWeight.w700 : FontWeight.w400,
@@ -414,7 +420,13 @@ class _WorkspaceCardState extends State<_WorkspaceCard> {
                 ],
               ),
               subtitle: Text(
-                '${t.id} · ${t.paneCount} pane${t.paneCount == 1 ? '' : 's'}',
+                [
+                  t.id,
+                  // A bare number is just the tab's position, already obvious.
+                  if (int.tryParse(t.label) == null) t.label,
+                  if (byTab[t.id] != null) byTab[t.id]!.agent,
+                  '${t.paneCount} pane${t.paneCount == 1 ? '' : 's'}',
+                ].join(' · '),
                 style: const TextStyle(fontSize: 10, fontFamily: mono),
               ),
               onTap: () => _openTab(t),

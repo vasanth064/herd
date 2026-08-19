@@ -171,6 +171,13 @@ class AgentInfo {
       );
 }
 
+/// Compact age for a card: seconds, then minutes, then hours.
+String shortAge(Duration d) {
+  if (d.inMinutes < 1) return '${d.inSeconds}s';
+  if (d.inHours < 1) return '${d.inMinutes}m';
+  return '${d.inHours}h${d.inMinutes.remainder(60)}m';
+}
+
 /// Blocked agents first — they are the only ones costing the user time.
 int agentSortKey(AgentInfo a) {
   switch (a.status) {

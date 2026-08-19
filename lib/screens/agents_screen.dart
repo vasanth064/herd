@@ -229,6 +229,7 @@ class _AgentList extends StatelessWidget {
           padding: const EdgeInsets.only(bottom: 8),
           child: _AgentCard(
             agent: a,
+            held: context.read<AppState>().heldFor(a.paneId),
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute(
@@ -378,8 +379,9 @@ class _Filter extends StatelessWidget {
 class _AgentCard extends StatelessWidget {
   final AgentInfo agent;
   final VoidCallback onTap;
+  final Duration? held;
 
-  const _AgentCard({required this.agent, required this.onTap});
+  const _AgentCard({required this.agent, required this.onTap, this.held});
 
   @override
   Widget build(BuildContext context) {
@@ -404,33 +406,49 @@ class _AgentCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  StatusDot(agent.status),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: StatusDot(agent.status),
+                  ),
                   const SizedBox(width: 8),
-                  Text(
-                    agent.agent,
-                    style: const TextStyle(
-                      fontFamily: mono,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
+                  // What the agent is doing is the only thing worth reading at
+                  // arm's length; which model it is barely matters.
+                  Expanded(
+                    child: Text(
+                      agent.title.isNotEmpty ? agent.title : agent.agent,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
-                  const Spacer(),
-                  StatusChip(agent.status),
+                  const SizedBox(width: 8),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      StatusChip(agent.status),
+                      if (held != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          shortAge(held!),
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontFamily: mono,
+                            color: Theme.of(context).hintColor,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ],
               ),
-              if (agent.title.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  agent.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13),
-                ),
-              ],
-              const SizedBox(height: 6),
+              const SizedBox(height: 8),
               Text(
-                '${agent.repo} · ${agent.paneId}',
+                '${agent.agent} · ${agent.repo} · ${agent.paneId}',
                 style: TextStyle(
                   fontSize: 11,
                   fontFamily: mono,

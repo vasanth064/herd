@@ -111,26 +111,53 @@ void main() {
       ..sessionName = 'default';
     app.state = ConnState.connected;
     app.agents = [
-      _agent('blocked-one', AgentStatus.blocked, pane: 'w1:p1'),
-      _agent('working-one', AgentStatus.working, pane: 'w1:p2'),
-      _agent('idle-one', AgentStatus.idle, pane: 'w1:p3'),
+      _agent('blocked-one', AgentStatus.blocked,
+          pane: 'w1:p1', title: 'Fix the migration'),
+      _agent('working-one', AgentStatus.working,
+          pane: 'w1:p2', title: 'Rename the columns'),
+      _agent('idle-one', AgentStatus.idle,
+          pane: 'w1:p3', title: 'Wire up telemetry'),
     ];
 
     await tester.pumpWidget(_wrap(app, const AgentsScreen()));
     await tester.pumpAndSettle();
 
-    expect(find.text('blocked-one'), findsOneWidget);
+    expect(find.text('Fix the migration'), findsOneWidget);
     expect(find.text('All 3'), findsOneWidget);
 
     // The blocked card renders above the others.
-    final blockedY = tester.getTopLeft(find.text('blocked-one')).dy;
-    final idleY = tester.getTopLeft(find.text('idle-one')).dy;
+    final blockedY = tester.getTopLeft(find.text('Fix the migration')).dy;
+    final idleY = tester.getTopLeft(find.text('Wire up telemetry')).dy;
     expect(blockedY, lessThan(idleY));
 
     await tester.tap(find.text('blocked 1'));
     await tester.pumpAndSettle();
-    expect(find.text('blocked-one'), findsOneWidget);
-    expect(find.text('idle-one'), findsNothing);
+    expect(find.text('Fix the migration'), findsOneWidget);
+    expect(find.text('Wire up telemetry'), findsNothing);
+  });
+
+  // The task is what you read at arm's length; the model that runs it is a
+  // detail, and a titleless agent must still be identifiable.
+  testWidgets('an agent card leads with its task, not its model',
+      (tester) async {
+    final app = await _state();
+    app.active = Profile(id: '1', name: 'box', host: 'h', username: 'v');
+    app.state = ConnState.connected;
+    app.agents = [
+      _agent('claude', AgentStatus.working,
+          pane: 'w1:p1', title: 'Revert the migrations'),
+      _agent('codex', AgentStatus.idle, pane: 'w1:p2', title: ''),
+    ];
+
+    await tester.pumpWidget(_wrap(app, const AgentsScreen()));
+    await tester.pumpAndSettle();
+
+    final title = tester.widget<Text>(find.text('Revert the migrations'));
+    expect(title.style?.fontSize, 15);
+    expect(find.text('claude · Strix · w1:p1'), findsOneWidget);
+
+    // No title to lead with, so the agent's name takes the headline.
+    expect(find.text('codex'), findsOneWidget);
   });
 
   testWidgets('agents screen groups by workspace when there are several',
@@ -295,4 +322,27 @@ void main() {
       expect(find.textContaining(lookFor(s).label), findsOneWidget);
     }
   });
+
+  // A Tailscale check arrives mid-handshake and has to close itself again, or
+  // it is left stranded under whatever screen the connection opens next.
+  testWidgets('an auth notice shows its link and then closes', (tester) async {
+    final app = await _state();
+    await tester.pumpWidget(_wrap(app, const ProfilesScreen()));
+    await tester.pumpAndSettle();
+
+    app.showAuthNotice!('# To authenticate, visit: https://login.tailscale.com/a/f');
+    await tester.pumpAndSettle();
+    expect(find.text('One more check'), findsOneWidget);
+    expect(find.text('Open link'), findsOneWidget);
+
+    // A second banner must not stack a second dialog.
+    app.showAuthNotice!('# To authenticate, visit: https://login.tailscale.com/a/f');
+    await tester.pumpAndSettle();
+    expect(find.text('One more check'), findsOneWidget);
+
+    app.hideAuthNotice!();
+    await tester.pumpAndSettle();
+    expect(find.text('One more check'), findsNothing);
+  });
+
 }

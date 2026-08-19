@@ -35,6 +35,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Last seen status per pane, so only transitions raise a notification.
   final Map<String, AgentStatus> _seen = {};
+
+  /// When each pane entered the status it is in — as far as this app has seen.
+  /// A reconnect reseeds it, so it dates the sighting, not the agent's work.
+  final Map<String, DateTime> _since = {};
   bool _seeded = false;
 
   /// Notification actions that arrived before there was a connection to run
@@ -217,6 +221,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     state = ConnState.disconnected;
     error = null;
     _seen.clear();
+    _since.clear();
     _seeded = false;
     unawaited(store.setLastProfileId(null));
     unawaited(Native.stopService());
@@ -282,6 +287,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// How long this pane has held its status, or null before the first sighting.
+  Duration? heldFor(String paneId) {
+    final t = _since[paneId];
+    return t == null ? null : DateTime.now().difference(t);
+  }
+
   Future<void> selectSession(String name) async {
     final p = active;
     if (p == null) return;
@@ -340,6 +351,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       live.add(a.paneId);
       final was = _seen[a.paneId];
       _seen[a.paneId] = a.status;
+      if (was != a.status) _since[a.paneId] = DateTime.now();
       if (seeding || was == a.status) continue;
       switch (a.status) {
         case AgentStatus.blocked:
@@ -365,6 +377,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     _seen.removeWhere((pane, _) => !live.contains(pane));
+    _since.removeWhere((pane, _) => !live.contains(pane));
   }
 
   /// Runs whatever the user tapped on a notification. Anything that arrives
