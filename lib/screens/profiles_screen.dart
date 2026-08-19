@@ -22,10 +22,72 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AppState>()
+      final app = context.read<AppState>()
         ..hostKeyPrompt = _askHostKey
-        ..challengePrompt = _askChallenge;
+        ..challengePrompt = _askChallenge
+        ..showAuthNotice = _showAuthNotice
+        ..hideAuthNotice = _hideAuthNotice;
+      final held = app.pendingAuthNotice;
+      if (held != null) _showAuthNotice(held);
     });
+  }
+
+  BuildContext? _noticeCtx;
+
+  /// A Tailscale SSH host holds the handshake open while it waits for the
+  /// browser check, so this shows up mid-connect and closes itself once the
+  /// handshake finishes either way.
+  void _showAuthNotice(String message) {
+    if (!mounted || _noticeCtx != null) return;
+    final url = firstUrl(message);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialog) {
+        _noticeCtx = dialog;
+        return AlertDialog(
+          title: const Text('One more check'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SelectableText(
+                message,
+                style: const TextStyle(fontFamily: mono, fontSize: 12),
+              ),
+              if (url != null) ...[
+                const SizedBox(height: 12),
+                FilledButton.tonalIcon(
+                  onPressed: () => launchUrl(
+                    Uri.parse(url),
+                    mode: LaunchMode.externalApplication,
+                  ),
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  label: const Text('Open link'),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Finish there and this closes on its own.',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialog),
+              child: const Text('Hide'),
+            ),
+          ],
+        );
+      },
+    ).then((_) => _noticeCtx = null);
+  }
+
+  void _hideAuthNotice() {
+    final c = _noticeCtx;
+    _noticeCtx = null;
+    if (c != null && Navigator.canPop(c)) Navigator.pop(c);
   }
 
   /// Tailscale SSH sends its browser check here, with no prompts at all — so

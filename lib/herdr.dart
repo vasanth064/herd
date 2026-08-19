@@ -30,7 +30,11 @@ class HostKeyChangedException implements Exception {
 
 class AuthException implements Exception {
   final String message;
-  AuthException(this.message);
+
+  /// A handshake the transport dropped, rather than credentials the server
+  /// refused — on mobile that is a network flap, and worth retrying.
+  final bool retryable;
+  AuthException(this.message, {this.retryable = false});
   @override
   String toString() => message;
 }
@@ -59,10 +63,12 @@ class AuthChallenge {
 
   const AuthChallenge(this.name, this.instruction, this.prompts);
 
-  static final _url = RegExp(r'https?://\S+');
-
-  String? get url => _url.firstMatch('$instruction $name')?.group(0);
+  String? get url => firstUrl('$instruction $name');
 }
+
+final _urlRe = RegExp(r'https?://\S+');
+
+String? firstUrl(String s) => _urlRe.firstMatch(s)?.group(0);
 
 enum ConnState { disconnected, connecting, connected, failed }
 
@@ -80,6 +86,11 @@ class HerdrConnection {
   /// Answers a keyboard-interactive challenge. Returning null aborts.
   final Future<List<String>?> Function(AuthChallenge)? onChallenge;
 
+  /// An auth-time banner carrying a link. Tailscale SSH sends its browser
+  /// check this way and then holds the handshake open until you finish it, so
+  /// showing it only after the connection fails is showing it too late.
+  final void Function(String message)? onAuthNotice;
+
   SSHClient? _client;
   SftpClient? _sftp;
   HostKeyChangedException? _mismatch;
@@ -89,7 +100,8 @@ class HerdrConnection {
   HerdrConnection(this.profile,
       {required this.onNewHost,
       required this.knownFingerprint,
-      this.onChallenge});
+      this.onChallenge,
+      this.onAuthNotice});
 
   bool get isConnected => _client != null && _client!.isClosed == false;
 
@@ -97,12 +109,6 @@ class HerdrConnection {
 
   Future<void> connect({String? secret, String? passphrase}) async {
     await close();
-    final socket = await SSHSocket.connect(
-      profile.host,
-      profile.port,
-      timeout: const Duration(seconds: 15),
-    );
-
     List<SSHKeyPair>? identities;
     if (profile.auth == AuthMethod.key) {
       if (secret == null || secret.isEmpty) {
@@ -117,6 +123,12 @@ class HerdrConnection {
         throw AuthException('Could not read the private key: $e');
       }
     }
+
+    final socket = await SSHSocket.connect(
+      profile.host,
+      profile.port,
+      timeout: const Duration(seconds: 15),
+    );
 
     final client = SSHClient(
       socket,
@@ -136,7 +148,10 @@ class HerdrConnection {
         if (answer != null) return answer;
         return req.prompts.isEmpty ? const <String>[] : null;
       },
-      onUserauthBanner: (message) => _banner = message.trim(),
+      onUserauthBanner: (message) {
+        _banner = message.trim();
+        if (firstUrl(_banner!) != null) onAuthNotice?.call(_banner!);
+      },
       // Throwing from inside this callback does not propagate — dartssh2 just
       // tears the transport down and the caller sees a generic "connection
       // closed", which would make a swapped host key look like a network blip.
@@ -163,7 +178,9 @@ class HerdrConnection {
       // The server's own banner says far more than "auth failed" — Tailscale
       // puts the reason it rejected you there.
       final why = _banner?.isNotEmpty == true ? '\n\n$_banner' : '';
-      if (e is SSHAuthAbortError) throw AuthException('${e.message}$why');
+      if (e is SSHAuthAbortError) {
+        throw AuthException('${e.message}$why', retryable: true);
+      }
       if (e is SSHAuthFailError) throw AuthException('${e.message}$why');
       rethrow;
     }

@@ -96,6 +96,8 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         }
         return ok;
       },
+      onChallenge: (c) async => app.challengePrompt?.call(c),
+      onAuthNotice: (m) => app.showAuthNotice?.call(m),
     );
     String message;
     var ok = false;
@@ -121,6 +123,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     } catch (e) {
       message = 'Could not reach ${p.host}:${p.port} — $e';
     } finally {
+      app.hideAuthNotice?.call();
       await conn.close();
     }
     if (!mounted) return;
@@ -148,6 +151,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   @override
   Widget build(BuildContext context) {
     final isKey = p.auth == AuthMethod.key;
+    final isTailscale = p.auth == AuthMethod.tailscale;
     return Scaffold(
       appBar: AppBar(
         title: Text(isNew ? 'Add host' : 'Edit host'),
@@ -215,6 +219,11 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                   label: Text('Password'),
                   icon: Icon(Icons.password_outlined),
                 ),
+                ButtonSegment(
+                  value: AuthMethod.tailscale,
+                  label: Text('Tailscale'),
+                  icon: Icon(Icons.shield_outlined),
+                ),
               ],
               selected: {p.auth},
               onSelectionChanged: (s) => setState(() {
@@ -240,7 +249,13 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                 ),
                 obscureText: true,
               ),
-            ] else
+            ] else if (isTailscale)
+              const Text(
+                'No key or password. Tailscale SSH authorises this device, and '
+                'asks you to finish a browser check when it needs one.',
+                style: TextStyle(fontSize: 12),
+              )
+            else
               TextFormField(
                 controller: _secret,
                 decoration: InputDecoration(

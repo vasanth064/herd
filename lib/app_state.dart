@@ -25,6 +25,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   DateTime? lastPoll;
   bool pollStale = false;
 
+  /// Auth and host-key failures don't heal on their own; retrying them just
+  /// re-opens the prompt the user already answered.
+  bool _fatal = false;
+
   Timer? _poll;
   Timer? _retry;
   int _backoffMs = 1000;
@@ -45,6 +49,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Set by the UI to answer a keyboard-interactive challenge.
   Future<List<String>?> Function(AuthChallenge)? challengePrompt;
+
+  /// Set by the UI to show, and then drop, an auth-time notice from the server.
+  void Function(String message)? showAuthNotice;
+  void Function()? hideAuthNotice;
+
+  /// Held so a notice raised before the UI exists — a reconnect on process
+  /// start — is still shown once a screen registers the hooks.
+  String? pendingAuthNotice;
 
   AppState(this.store) {
     profiles = store.loadProfiles();
@@ -128,6 +140,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           return ok;
         },
         onChallenge: (c) async => challengePrompt?.call(c),
+        onAuthNotice: _authNotice,
       );
 
   Future<void> connect(Profile p) async {
@@ -135,6 +148,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _backoffMs = 1000;
     active = p;
     error = null;
+    _fatal = false;
     state = ConnState.connecting;
     agents = [];
     notifyListeners();
@@ -151,6 +165,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         secret: await store.secret(p.secretKey),
         passphrase: await store.secret(p.passphraseKey),
       );
+      _authNotice(null);
       conn = c;
       sessions = await c.sessions();
       if (p.sessionName == null && sessions.length == 1) {
@@ -170,12 +185,24 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       await drainActions();
       _startPolling();
     } catch (e) {
+      _authNotice(null);
       await c.close();
       conn = null;
       error = e.toString();
+      _fatal = (e is AuthException && !e.retryable) ||
+          e is HostKeyChangedException;
       state = ConnState.failed;
       notifyListeners();
       _scheduleRetry();
+    }
+  }
+
+  void _authNotice(String? message) {
+    pendingAuthNotice = message;
+    if (message == null) {
+      hideAuthNotice?.call();
+    } else {
+      showAuthNotice?.call(message);
     }
   }
 
@@ -201,11 +228,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// network blip worth retrying.
   void _scheduleRetry() {
     final p = active;
-    if (p == null) return;
-    if (error != null &&
-        (error!.contains('Host key') || error!.contains('key changed'))) {
-      return;
-    }
+    if (p == null || _fatal) return;
     if (!_lostNotified) {
       _lostNotified = true;
       unawaited(Native.notify(
@@ -375,6 +398,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      // A Tailscale browser check leaves a connect() in flight while the app is
+      // in the background; starting a second one throws away the check.
+      if (this.state == ConnState.connecting) return;
       final p = active;
       if (p != null && !(conn?.isConnected ?? false)) {
         _backoffMs = 1000;

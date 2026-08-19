@@ -1,6 +1,8 @@
 import 'dart:convert';
 
-enum AuthMethod { key, password }
+/// `tailscale` carries no secret at all: the host authorises the Tailscale
+/// identity itself, over a keyboard-interactive browser check.
+enum AuthMethod { key, password, tailscale }
 
 /// Same port on both ends — you type 3000 and reach the host's 3000. That is
 /// what port forwarding is for in practice, and a second number to fill in
