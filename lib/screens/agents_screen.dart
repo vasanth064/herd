@@ -7,6 +7,7 @@ import '../app_state.dart';
 import '../herdr.dart';
 import '../models.dart';
 import '../theme.dart';
+import 'files_screen.dart';
 import 'forwards_screen.dart';
 import 'settings_screen.dart';
 import 'workspaces_screen.dart';
@@ -120,6 +121,29 @@ class _AgentsScreenState extends State<AgentsScreen> {
               context,
               MaterialPageRoute(builder: (_) => const WorkspacesScreen()),
             ),
+          ),
+          IconButton(
+            tooltip: 'Files',
+            icon: const Icon(Icons.folder_outlined),
+            onPressed: () async {
+              final c = app.conn;
+              if (c == null || !c.isConnected) return;
+              String home;
+              try {
+                home = await c.homeDir();
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context)
+                      .showSnackBar(SnackBar(content: Text('$e')));
+                }
+                return;
+              }
+              if (!context.mounted) return;
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => FilesScreen(path: home)),
+              );
+            },
           ),
           if (profile != null)
             _PortsButton(

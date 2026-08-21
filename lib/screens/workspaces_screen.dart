@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../theme.dart';
+import 'files_screen.dart';
 import 'terminal_screen.dart';
 
 /// herdr's sidebar as a real screen.
@@ -94,9 +95,14 @@ class _WorkspacesScreenState extends State<WorkspacesScreen> {
               controller: cwd,
               autocorrect: false,
               style: const TextStyle(fontFamily: mono, fontSize: 13),
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Directory',
                 hintText: 'optional, e.g. ~/Projects/app',
+                suffixIcon: IconButton(
+                  tooltip: 'Browse',
+                  icon: const Icon(Icons.folder_open, size: 20),
+                  onPressed: () => _pickDir(cwd),
+                ),
               ),
             ),
           ],
@@ -113,6 +119,28 @@ class _WorkspacesScreenState extends State<WorkspacesScreen> {
     );
     if (ok != true) return null;
     return (label: label.text.trim(), cwd: cwd.text.trim());
+  }
+
+  /// Browse the host for the directory instead of typing a path from memory.
+  Future<void> _pickDir(TextEditingController cwd) async {
+    final c = app.conn;
+    if (c == null || !c.isConnected) return;
+    String root;
+    try {
+      final typed = cwd.text.trim();
+      root = typed.startsWith('/') ? typed : await c.homeDir();
+    } catch (e) {
+      _report(e);
+      return;
+    }
+    if (!mounted) return;
+    final picked = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => FilesScreen(path: root, picking: true),
+      ),
+    );
+    if (picked != null) cwd.text = picked;
   }
 
   Future<void> _createWorkspace() async {

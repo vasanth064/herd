@@ -564,6 +564,27 @@ class HerdrConnection {
     return path;
   }
 
+  /// SFTP takes absolute paths and never expands `~`, so the file browser
+  /// needs the real home directory.
+  Future<String> homeDir() => _homeDir();
+
+  Future<List<SftpName>> listDir(String path) async =>
+      (await _sftpClient()).listdir(path);
+
+  Future<SftpFileAttrs> statPath(String path) async =>
+      (await _sftpClient()).stat(path);
+
+  /// Head of a remote file. Capped because previews run on a phone and a log
+  /// or a video would otherwise be pulled into memory whole.
+  Future<Uint8List> readFileHead(String path, int cap) async {
+    final f = await (await _sftpClient()).open(path);
+    try {
+      return await f.readBytes(length: cap);
+    } finally {
+      await f.close();
+    }
+  }
+
   String? _home;
   Future<String> _homeDir() async {
     if (_home != null) return _home!;

@@ -13,6 +13,7 @@ import '../app_state.dart';
 import '../keys.dart';
 import '../models.dart';
 import '../theme.dart';
+import 'files_screen.dart';
 
 /// Attaches the herdr TUI over a PTY sized to this screen.
 ///
@@ -340,6 +341,22 @@ class _TerminalScreenState extends State<TerminalScreen> {
             onPressed: () => _setFont(1),
             icon: const Text('A+', style: TextStyle(fontSize: 15)),
           ),
+          if (me != null)
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Files',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => FilesScreen(
+                    path: me.foregroundCwd.isNotEmpty
+                        ? me.foregroundCwd
+                        : me.cwd,
+                  ),
+                ),
+              ),
+              icon: const Icon(Icons.folder_outlined, size: 22),
+            ),
           IconButton(
             visualDensity: VisualDensity.compact,
             tooltip: 'Full screen',

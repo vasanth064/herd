@@ -5,6 +5,8 @@ import 'package:herdr_mobile/app_state.dart';
 import 'package:herdr_mobile/herdr.dart';
 import 'package:herdr_mobile/models.dart';
 import 'package:herdr_mobile/screens/agents_screen.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:herdr_mobile/screens/files_screen.dart';
 import 'package:herdr_mobile/screens/forwards_screen.dart';
 import 'package:herdr_mobile/screens/profile_edit_screen.dart';
 import 'package:herdr_mobile/screens/profiles_screen.dart';
@@ -345,4 +347,30 @@ void main() {
     expect(find.text('One more check'), findsNothing);
   });
 
+
+  testWidgets('files screen says so when there is no connection',
+      (tester) async {
+    final app = await _state();
+    // An agent that reports no cwd would otherwise land here with an empty path.
+    await tester.pumpWidget(_wrap(app, const FilesScreen(path: '')));
+    await tester.pumpAndSettle();
+    expect(find.text('Not connected.'), findsOneWidget);
+  });
+
+  testWidgets('markdown renders as headings and text, not as source',
+      (tester) async {
+    final app = await _state();
+    await tester.pumpWidget(_wrap(
+      app,
+      Builder(
+        builder: (c) => MarkdownBody(
+          data: '# Title\n\nSome **bold** text.',
+          styleSheet: githubStyle(c),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Title'), findsOneWidget);
+    expect(find.textContaining('#'), findsNothing);
+  });
 }
