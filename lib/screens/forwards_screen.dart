@@ -158,6 +158,7 @@ class _ForwardsScreenState extends State<ForwardsScreen> {
               itemBuilder: (c, i) {
                 final r = p.forwards[i];
                 final active = app.forwardActive(r);
+                final failure = app.forwardErrors[r.id];
                 return Dismissible(
                   key: ValueKey(r.id),
                   direction: DismissDirection.endToStart,
@@ -188,15 +189,29 @@ class _ForwardsScreenState extends State<ForwardsScreen> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    subtitle: Text(
-                      'localhost:${r.port}',
-                      style: TextStyle(
-                        fontFamily: mono,
-                        fontSize: 12,
-                        color: active
-                            ? Theme.of(context).colorScheme.primary
-                            : Theme.of(context).hintColor,
-                      ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'localhost:${r.port}',
+                          style: TextStyle(
+                            fontFamily: mono,
+                            fontSize: 12,
+                            color: active
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).hintColor,
+                          ),
+                        ),
+                        if (failure != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              failure,
+                              style: const TextStyle(
+                                  fontSize: 11, color: Color(0xFFFF5252)),
+                            ),
+                          ),
+                      ],
                     ),
                     onTap: active
                         ? () => launchUrl(

@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:dartssh2/dartssh2.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:herdr_mobile/herdr.dart';
 import 'package:herdr_mobile/models.dart';
@@ -26,5 +28,16 @@ void main() {
     await second.startForward(rule);
     expect(second.forwardActive(rule), isTrue);
     await second.close();
+  });
+
+  test('a prohibited channel is permanent, a closed port is not', () {
+    expect(isForwardingRefused(SSHChannelOpenError(1, 'administratively '
+        'prohibited: port forwarding is disabled')), isTrue);
+    expect(isForwardingRefused(SSHChannelOpenError(2, 'connect failed')),
+        isFalse);
+    expect(forwardFailure(SSHChannelOpenError(1, 'nope')),
+        contains('Tailscale SSH'));
+    expect(forwardFailure(SSHChannelOpenError(2, 'connect failed')),
+        'connect failed');
   });
 }

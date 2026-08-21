@@ -70,6 +70,22 @@ final _urlRe = RegExp(r'https?://\S+');
 
 String? firstUrl(String s) => _urlRe.firstMatch(s)?.group(0);
 
+/// SSH_OPEN_ADMINISTRATIVELY_PROHIBITED: the server will not open this channel
+/// now or later, as opposed to a service that merely is not listening yet.
+bool isForwardingRefused(Object e) =>
+    e is SSHChannelOpenError && e.code == 1;
+
+/// The reason a tunnel died, in terms the user can act on.
+String forwardFailure(Object e) {
+  if (isForwardingRefused(e)) {
+    return 'The SSH server refused the tunnel. Tailscale SSH does not allow '
+        'port forwarding — connect to this host through its own sshd instead, '
+        'on a port other than 22.';
+  }
+  if (e is SSHChannelOpenError) return e.description;
+  return '$e';
+}
+
 enum ConnState { disconnected, connecting, connected, failed }
 
 /// Owns one SSH connection and speaks `herdr` over it.
@@ -598,7 +614,10 @@ class HerdrConnection {
 
   bool forwardActive(ForwardRule r) => _forwards.containsKey(r.id);
 
-  Future<void> startForward(ForwardRule rule) async {
+  Future<void> startForward(
+    ForwardRule rule, {
+    void Function(Object error)? onError,
+  }) async {
     if (_forwards.containsKey(rule.id)) return;
     final server = await ServerSocket.bind(
       InternetAddress.loopbackIPv4,
@@ -610,8 +629,12 @@ class HerdrConnection {
         final channel = await _need.forwardLocal('127.0.0.1', rule.port);
         socket.cast<List<int>>().pipe(channel.sink);
         channel.stream.cast<List<int>>().pipe(socket);
-      } catch (_) {
+      } catch (e) {
         socket.destroy();
+        onError?.call(e);
+        // A refusal applies to every future channel too, so a rule left
+        // listening would report itself as working while nothing gets through.
+        if (isForwardingRefused(e)) await stopForward(rule);
       }
     });
   }

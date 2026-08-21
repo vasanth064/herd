@@ -307,9 +307,18 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   bool forwardActive(ForwardRule r) => conn?.forwardActive(r) ?? false;
 
+  /// Why a running forward stopped carrying traffic, per rule. A refused
+  /// channel only shows up once something connects, long after the toggle.
+  final Map<String, String> forwardErrors = {};
+
   Future<String?> startForward(ForwardRule r) async {
+    forwardErrors.remove(r.id);
     try {
-      await conn?.startForward(r);
+      await conn?.startForward(r, onError: (e) {
+        forwardErrors[r.id] = forwardFailure(e);
+        _syncService();
+        notifyListeners();
+      });
       _syncService();
       notifyListeners();
       return null;
@@ -319,6 +328,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> stopForward(ForwardRule r) async {
+    forwardErrors.remove(r.id);
     await conn?.stopForward(r);
     _syncService();
     notifyListeners();
