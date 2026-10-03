@@ -88,6 +88,133 @@ String forwardFailure(Object e) {
 
 enum ConnState { disconnected, connecting, connected, failed }
 
+class SessionPoll {
+  /// Log size when read, or -1 when there is no log.
+  final int size;
+  final int start;
+  final List<String> lines;
+
+  /// Byte offset to ask for next: just past the last complete line.
+  final int next;
+  final String screen;
+
+  /// The lines are a filtered read of the whole log rather than a byte range.
+  final bool history;
+
+  const SessionPoll(
+    this.size,
+    this.start,
+    this.lines,
+    this.next,
+    this.screen, {
+    this.history = false,
+  });
+
+  static SessionPoll parse(List<int> out) {
+    const mark = [0x0a, 0x1e, 0x53, 0x43, 0x52, 0x45, 0x45, 0x4e, 0x1e, 0x0a];
+    var m = -1;
+    for (var i = out.length - mark.length; i >= 0; i--) {
+      var ok = true;
+      for (var k = 0; k < mark.length && ok; k++) {
+        ok = out[i + k] == mark[k];
+      }
+      if (ok) {
+        m = i;
+        break;
+      }
+    }
+    final head = m < 0 ? out : out.sublist(0, m);
+    final screen = m < 0
+        ? ''
+        : utf8.decode(out.sublist(m + mark.length), allowMalformed: true);
+    final nl1 = head.indexOf(0x0a);
+    final nl2 = nl1 < 0 ? -1 : head.indexOf(0x0a, nl1 + 1);
+    if (nl2 < 0) return SessionPoll(-1, 0, const [], 0, screen);
+    final size = int.tryParse(utf8.decode(head.sublist(0, nl1)).trim()) ?? -1;
+    final second = utf8.decode(head.sublist(nl1 + 1, nl2)).trim();
+    final history = second == 'H';
+    final start = history ? 0 : int.tryParse(second) ?? 0;
+    final data = head.sublist(nl2 + 1);
+    final last = data.lastIndexOf(0x0a);
+    final whole = last < 0 ? <int>[] : data.sublist(0, last);
+    return SessionPoll(
+      size,
+      start,
+      utf8.decode(whole, allowMalformed: true).split('\n'),
+      history ? size : start + (last < 0 ? 0 : last + 1),
+      screen,
+      history: history,
+    );
+  }
+}
+
+class SubAgent {
+  final String path;
+  final String description;
+  final String type;
+
+  /// Seconds since its log last changed; a fresh log means it is still going.
+  final int idleSeconds;
+  const SubAgent(this.path, this.description, this.type, this.idleSeconds);
+
+  bool get running => idleSeconds < 45;
+
+  static SubAgent? parse(String line) {
+    final parts = line.split('\t');
+    if (parts.length < 3) return null;
+    try {
+      final meta = jsonDecode(parts.sublist(2).join('\t')) as Map;
+      return SubAgent(
+        parts[0],
+        meta['description'] as String? ?? 'Agent',
+        meta['agentType'] as String? ?? '',
+        int.tryParse(parts[1]) ?? 1 << 30,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+class ModelOption {
+  final String id;
+  final String label;
+  final String description;
+
+  /// The Claude model this option stands for, which keys its settings.
+  final String behavesAs;
+  const ModelOption(this.id, this.label, this.description, this.behavesAs);
+}
+
+class ClaudeModels {
+  final List<ModelOption> options;
+  final Map<String, String> effortByModel;
+  final String? defaultEffort;
+  const ClaudeModels(this.options, this.effortByModel, this.defaultEffort);
+
+  static ClaudeModels fromSettings(Map<String, dynamic> j) {
+    final picker = j['modelPicker'] as Map? ?? const {};
+    return ClaudeModels(
+      [
+        for (final o in (picker['options'] as List? ?? const []).cast<Map>())
+          if (o['model'] is String)
+            ModelOption(
+              o['model'] as String,
+              o['label'] as String? ?? o['model'] as String,
+              o['description'] as String? ?? '',
+              o['behavesAs'] as String? ?? o['model'] as String,
+            ),
+      ],
+      {
+        for (final e in (j['modelSettings'] as Map? ?? const {}).entries)
+          if ((e.value as Map?)?['effortLevel'] is String)
+            e.key as String: (e.value as Map)['effortLevel'] as String,
+      },
+      j['effortLevel'] as String?,
+    );
+  }
+}
+
 /// Owns one SSH connection and speaks `herdr` over it.
 class HerdrConnection {
   final Profile profile;
@@ -535,6 +662,246 @@ class HerdrConnection {
 
   Future<void> sendKeys(String target, List<String> keys) =>
       _run(['agent', 'send-keys', target, ...keys]);
+
+  static final _uuid = RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+  );
+
+  /// The Claude Code session log behind a pane. herdr reports the session id
+  /// when its claude integration is installed; without it, Claude's own
+  /// per-process record (`~/.claude/sessions/<pid>.json`) names it.
+  Future<String?> claudeTranscript(String paneId) async {
+    String? id;
+    try {
+      final r = await _json(['agent', 'get', paneId]);
+      final s = (r['agent'] as Map?)?['agent_session'];
+      if (s is Map && s['value'] is String) id = s['value'] as String;
+    } catch (_) {}
+    if (id == null || !_uuid.hasMatch(id)) {
+      final r = await _json(['pane', 'process-info', '--pane', paneId]);
+      final info = r['process_info'] as Map? ?? const {};
+      final pids = <int>{
+        for (final p in (info['foreground_processes'] as List? ?? const []))
+          if ((p as Map)['pid'] is int) p['pid'] as int,
+        if (info['foreground_process_group_id'] is int)
+          info['foreground_process_group_id'] as int,
+      };
+      if (pids.isEmpty) return null;
+      final res = await _shRun(
+        'for p in ${pids.join(' ')}; do f="\$HOME/.claude/sessions/\$p.json"; '
+        '[ -f "\$f" ] && cat "\$f" && break; done',
+      );
+      try {
+        final j = jsonDecode(utf8.decode(res.stdout)) as Map;
+        id = j['sessionId'] as String?;
+      } catch (_) {
+        return null;
+      }
+    }
+    if (id == null || !_uuid.hasMatch(id)) return null;
+    final res = await _shRun(
+      'ls -t "\$HOME"/.claude/projects/*/$id.jsonl 2>/dev/null | head -1',
+    );
+    final path = utf8.decode(res.stdout).trim();
+    return path.isEmpty ? null : path;
+  }
+
+  static const _screenMark = '\x1eSCREEN\x1e';
+
+  /// What a summary needs from a long log, without the tool output that is
+  /// most of its bytes.
+  static const _historyRecords =
+      '\'"type":"(assistant|ai-title|last-prompt|system)"|"toolUseResult":\\{"task"|"type":"user","message":\\{"role":"user","content":"\'';
+
+  /// One round trip per poll, which matters over Tailscale: the new bytes of
+  /// the session log since [offset] (capped, so a first read of a long session
+  /// takes only its tail) and the pane's visible screen.
+  Future<SessionPoll> pollSession(
+    String? path,
+    int offset,
+    String? paneId, {
+    int cap = 3 << 20,
+  }) async {
+    final read = paneId == null
+        ? 'true'
+        : _cmd([
+            'pane',
+            'read',
+            paneId,
+            '--source',
+            'visible',
+            '--format',
+            'text',
+          ]);
+    final log = path == null
+        ? 'echo -1; echo 0'
+        : 'f=${shq(path)}; s=\$(stat -c %s "\$f" 2>/dev/null || echo -1); '
+              'o=$offset; [ "\$s" -lt "\$o" ] && o=0; '
+              'if [ "\$o" -eq 0 ] && [ "\$s" -gt $cap ]; then '
+              'echo "\$s"; echo H; head -c "\$s" "\$f" | grep -E $_historyRecords | tail -c $cap; '
+              'else echo "\$s"; echo "\$o"; '
+              '[ "\$s" -ge 0 ] && tail -c +\$((o+1)) "\$f" | head -c \$((s-o)); fi';
+    final res = await _shRun(
+      '$log; printf "\\n$_screenMark\\n"; $read 2>/dev/null',
+    );
+    return SessionPoll.parse(res.stdout);
+  }
+
+  Future<void> sendText(String paneId, String text) =>
+      _run(['pane', 'send-text', paneId, text]).then((_) {});
+
+  Future<void> paneKeys(String paneId, List<String> keys) =>
+      _run(['pane', 'send-keys', paneId, ...keys]).then((_) {});
+
+  /// Sends a message the way upstream does: agent prompt first, and typing it
+  /// plus Enter when herdr will not take a prompt for the pane right now.
+  Future<void> say(String paneId, String text) async {
+    try {
+      await prompt(paneId, text);
+    } on HerdrException catch (e) {
+      if (!e.message.contains('not_found') &&
+          !e.message.contains('not_ready') &&
+          !e.message.contains('not found') &&
+          !e.message.contains('not ready')) {
+        rethrow;
+      }
+      await sendText(paneId, text);
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      await paneKeys(paneId, ['enter']);
+    }
+  }
+
+  /// Login shells differ (zsh does not word-split), so scripts run in sh.
+  Future<SSHRunResult> _shRun(String script) =>
+      _need.runWithResult('sh -c ${shq(script)}');
+
+  Future<String> _sh(String script) async =>
+      utf8.decode((await _shRun(script)).stdout, allowMalformed: true);
+
+  /// Outermost git repo around [cwd]: one tsk board per product, even when a
+  /// package inside it is its own repo.
+  Future<String> projectRoot(String cwd) async {
+    final out = await _sh(
+      'd=\$(git -C ${shq(cwd)} rev-parse --show-toplevel 2>/dev/null) '
+      '|| { echo ${shq(cwd)}; exit; }; '
+      'while p=\$(git -C "\$d/.." rev-parse --show-toplevel 2>/dev/null); do d=\$p; done; '
+      'echo "\$d"',
+    );
+    final r = out.trim();
+    return r.isEmpty ? cwd : r;
+  }
+
+  Future<List<Map<String, dynamic>>> tskList(
+    String root, {
+    bool done = false,
+  }) async {
+    final out = await _sh(
+      'PATH="\$HOME/.local/bin:\$PATH"; '
+      'tsk list -p ${shq(root)}${done ? ' --done' : ''} --json 2>/dev/null',
+    );
+    try {
+      return (jsonDecode(out) as List).cast<Map<String, dynamic>>();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> tskStatus(int number, String status) async {
+    final res = await _shRun(
+      'PATH="\$HOME/.local/bin:\$PATH"; '
+      'tsk status $number ${shq(status)}',
+    );
+    if (res.exitCode != 0) {
+      throw HerdrException(utf8.decode(res.stderr).trim());
+    }
+  }
+
+  /// Files under [cwd] for the @ picker: git's view when it is a repo, a
+  /// bounded walk otherwise.
+  Future<List<String>> projectFiles(String cwd) async {
+    final out = await _sh(
+      'cd ${shq(cwd)} 2>/dev/null || exit; '
+      'git ls-files -co --exclude-standard 2>/dev/null | head -20000 '
+      '|| find . -maxdepth 6 -type f -not -path "*/.*" -not -path "*/node_modules/*" '
+      '| sed "s|^\\./||" | head -5000',
+    );
+    return out.split('\n').where((l) => l.isNotEmpty).toList();
+  }
+
+  /// Slash commands Claude Code would offer in [cwd]: user and project
+  /// commands and skills, by name.
+  Future<List<String>> slashCommands(String cwd) async {
+    final out = await _sh(
+      'cd ${shq(cwd)} 2>/dev/null; '
+      'for d in "\$HOME/.claude/commands" .claude/commands; do '
+      '[ -d "\$d" ] && find "\$d" -name "*.md" | sed "s|^\$d/||;s|\\.md\$||;s|/|:|g"; done; '
+      'for d in "\$HOME/.claude/skills" .claude/skills; do '
+      '[ -d "\$d" ] && ls "\$d"; done',
+    );
+    return out.split('\n').where((l) => l.isNotEmpty).toSet().toList()..sort();
+  }
+
+  /// TCP ports the pane's processes (and their children) are listening on,
+  /// with the program name.
+  Future<List<({int port, String name})>> listeningPorts(String paneId) async {
+    final r = await _json(['pane', 'process-info', '--pane', paneId]);
+    final shell = (r['process_info'] as Map?)?['shell_pid'];
+    if (shell is! int) return const [];
+    final out = await _sh(
+      'pids=$shell; all=$shell; while [ -n "\$pids" ]; do '
+      'pids=\$(for p in \$pids; do cat /proc/\$p/task/*/children 2>/dev/null; done); '
+      'all="\$all \$pids"; done; '
+      'ss -Hltnp 2>/dev/null | while read -r _ _ _ local _ users; do '
+      'for p in \$all; do case "\$users" in *pid=\$p,*) '
+      'n=\${users#*\\(\\(\\"}; echo "\${local##*:} \${n%%\\"*}"; break;; esac; done; done',
+    );
+    final seen = <int>{};
+    return [
+      for (final l in out.split('\n'))
+        if (l.contains(' '))
+          if (int.tryParse(l.split(' ').first) case final port?)
+            if (seen.add(port)) (port: port, name: l.split(' ').last),
+    ];
+  }
+
+  /// Claude Code's model picker as configured on the host, plus the default
+  /// effort per model.
+  Future<ClaudeModels> claudeModels() async {
+    final out = await _sh('cat "\$HOME/.claude/settings.json" 2>/dev/null');
+    try {
+      return ClaudeModels.fromSettings(jsonDecode(out) as Map<String, dynamic>);
+    } catch (_) {
+      return const ClaudeModels([], {}, null);
+    }
+  }
+
+  /// Subagents a Claude session started: their logs sit next to the
+  /// session's own, each with a meta file naming its task.
+  Future<List<SubAgent>> subAgents(String sessionPath) async {
+    final dir = sessionPath.replaceFirst(RegExp(r'\.jsonl$'), '/subagents');
+    final out = await _sh(
+      'cd ${shq(dir)} 2>/dev/null || exit 0; '
+      'now=\$(date +%s); for m in agent-*.meta.json; do [ -f "\$m" ] || continue; '
+      'l="\${m%.meta.json}.jsonl"; '
+      'printf "%s\\t%s\\t%s\\n" "\$PWD/\$l" "\$((now - \$(stat -c %Y "\$l" 2>/dev/null || echo 0)))" "\$(tr -d "\\n" < "\$m")"; done',
+    );
+    return [
+      for (final line in out.split('\n')) ?SubAgent.parse(line),
+    ]..sort((a, b) => a.idleSeconds.compareTo(b.idleSeconds));
+  }
+
+  /// Only the step and title records of a session log, for the home cards.
+  Future<List<String>> stepLines(String path) async {
+    final out = await _sh(
+      'grep -E \'"name":"(TaskCreate|TaskUpdate|TodoWrite)"|"toolUseResult":\\{"task"|"type":"ai-title"\' '
+      '${shq(path)} 2>/dev/null | tail -c 400000',
+    );
+    return out.split('\n');
+  }
+
+  /// Whole remote file as text, capped.
+  Future<String> readText(String path, {int cap = 1 << 20}) async =>
+      utf8.decode(await readFileHead(path, cap), allowMalformed: true);
 
   Future<SftpClient> _sftpClient() async => _sftp ??= await _need.sftp();
 

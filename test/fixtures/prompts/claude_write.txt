@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.287
+▝▜██████▀  Haiku 4.5 · API Usage Billing
+ ▝▝   ▝▝   /tmp/hpt
+
+
+❯ Run this exact bash command and nothing else: curl -sI https://example.com
+
+  Ran 1 shell command
+
+● HTTP/2 200
+  date: Fri, 02 Oct 2026 17:52:32 GMT
+  content-type: text/html; charset=utf-8
+  server: cloudflare
+  last-modified: Fri, 02 Oct 2026 16:11:13 GMT
+  allow: GET, HEAD
+  accept-ranges: bytes
+  age: 6045
+  cf-cache-status: HIT
+  cf-ray: a4458fb9dbecdc0a-MAA
+  alt-svc: h3=":443"; ma=86400
+
+✻ Cogitated for 10s · done 11:22 pm
+
+❯ Create the file /tmp/hpt/hello.txt containing the word hi. Use the Write tool.
+
+● Write(hello.txt)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Create file
+ hello.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+  1 hi
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to create hello.txt?
+ ❯ 1. Yes
+   2. Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)
+   3. No
+
+ Esc to cancel · Tab to amend

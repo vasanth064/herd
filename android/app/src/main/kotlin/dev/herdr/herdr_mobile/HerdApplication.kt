@@ -39,6 +39,7 @@ class HerdApplication : FlutterApplication() {
                         result.success(null)
                     }
                     "takeActions" -> result.success(Notifications.takeActions())
+                    "capture" -> capture(call, result)
                     else -> result.notImplemented()
                 }
             }
@@ -48,8 +49,45 @@ class HerdApplication : FlutterApplication() {
         FlutterEngineCache.getInstance().put(ENGINE, engine)
     }
 
+    /// Copies from Flutter's own SurfaceView: a whole-window copy comes back
+    /// blank, and Dart's toImage cannot see a WebView's texture.
+    private fun capture(call: io.flutter.plugin.common.MethodCall, result: MethodChannel.Result) {
+        val root = activity?.get()?.window?.decorView
+        val surface = root?.let { findSurface(it) }
+        if (surface == null || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) {
+            result.success(null)
+            return
+        }
+        val r = android.graphics.Rect(
+            call.argument<Int>("x")!!, call.argument<Int>("y")!!,
+            call.argument<Int>("x")!! + call.argument<Int>("w")!!,
+            call.argument<Int>("y")!! + call.argument<Int>("h")!!,
+        )
+        val bitmap = android.graphics.Bitmap.createBitmap(r.width(), r.height(), android.graphics.Bitmap.Config.ARGB_8888)
+        android.view.PixelCopy.request(surface, r, bitmap, { code ->
+            if (code != android.view.PixelCopy.SUCCESS) {
+                result.success(null)
+            } else {
+                val out = java.io.ByteArrayOutputStream()
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                result.success(out.toByteArray())
+            }
+            bitmap.recycle()
+        }, android.os.Handler(android.os.Looper.getMainLooper()))
+    }
+
+    private fun findSurface(v: android.view.View): android.view.SurfaceView? {
+        if (v is android.view.SurfaceView) return v
+        if (v is android.view.ViewGroup) {
+            for (i in 0 until v.childCount) findSurface(v.getChildAt(i))?.let { return it }
+        }
+        return null
+    }
+
     companion object {
         const val ENGINE = "main"
+
+        var activity: java.lang.ref.WeakReference<android.app.Activity>? = null
         private const val CHANNEL = "herd/native"
 
         private var channel: MethodChannel? = null

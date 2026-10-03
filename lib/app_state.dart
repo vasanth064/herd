@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'herdr.dart';
 import 'models.dart';
 import 'native.dart';
+import 'session/digest.dart';
 import 'store.dart';
 
 class AppState extends ChangeNotifier with WidgetsBindingObserver {
@@ -22,6 +23,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   List<AgentInfo> agents = [];
   List<SessionInfo> sessions = [];
+
+  /// What each blocked pane is asking, for its card.
+  final Map<String, String> questions = {};
+
+  /// Steps done and total per Claude pane, refreshed every [_cardEvery] polls.
+  final Map<String, (int, int)> stepProgress = {};
+  int _polls = 0;
+  static const _cardEvery = 15;
   DateTime? lastPoll;
   bool pollStale = false;
 
@@ -269,6 +278,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
               next[i].title == agents[i].title);
       await _notifyStatusChanges(next);
       agents = next;
+      if (_polls++ % _cardEvery == 0) unawaited(_refreshCards(c));
       lastPoll = DateTime.now();
       final wasStale = pollStale;
       pollStale = false;
@@ -285,6 +295,38 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         _scheduleRetry();
       }
     }
+  }
+
+  Future<void> _refreshCards(HerdrConnection c) async {
+    var changed = false;
+    for (final a in agents.where(
+      (a) =>
+          a.status == AgentStatus.blocked && !questions.containsKey(a.paneId),
+    )) {
+      final q = await c.agentQuestion(a.paneId);
+      if (q != null) {
+        questions[a.paneId] = q;
+        changed = true;
+      }
+    }
+    for (final a in agents.where((a) => a.agent == 'claude')) {
+      try {
+        final path = await c.claudeTranscript(a.paneId);
+        if (path == null) continue;
+        final d = Digest()..addLines(await c.stepLines(path));
+        final steps = d.steps;
+        final p = (
+          steps.where((s) => s.state == StepStatus.done).length,
+          steps.length,
+        );
+        if (stepProgress[a.paneId] != p) {
+          stepProgress[a.paneId] = p;
+          changed = true;
+        }
+      } catch (_) {}
+    }
+    stepProgress.removeWhere((k, _) => !agents.any((a) => a.paneId == k));
+    if (changed) notifyListeners();
   }
 
   /// How long this pane has held its status, or null before the first sighting.
@@ -361,11 +403,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       live.add(a.paneId);
       final was = _seen[a.paneId];
       _seen[a.paneId] = a.status;
+      if (a.status != AgentStatus.blocked) questions.remove(a.paneId);
       if (was != a.status) _since[a.paneId] = DateTime.now();
       if (seeding || was == a.status) continue;
       switch (a.status) {
         case AgentStatus.blocked:
           final question = await conn?.agentQuestion(a.paneId);
+          if (question != null) questions[a.paneId] = question;
           unawaited(Native.notify(
             pane: a.paneId,
             title: '${a.agent} is waiting · ${a.repo}',

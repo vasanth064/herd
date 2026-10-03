@@ -16,6 +16,11 @@ class MainActivity : FlutterActivity() {
         askForNotifications()
     }
 
+    override fun onResume() {
+        super.onResume()
+        HerdApplication.activity = java.lang.ref.WeakReference(this)
+    }
+
     /// Denying leaves the foreground service running, so forwards still work —
     /// but agent alerts are the point now, so ask up front rather than later.
     private fun askForNotifications() {

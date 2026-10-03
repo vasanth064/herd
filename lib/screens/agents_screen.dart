@@ -11,6 +11,9 @@ import 'files_screen.dart';
 import 'forwards_screen.dart';
 import 'settings_screen.dart';
 import 'workspaces_screen.dart';
+import 'session/peek_screen.dart';
+import 'session/session_screen.dart';
+import 'session/widgets.dart';
 import 'terminal_screen.dart';
 
 class AgentsScreen extends StatefulWidget {
@@ -114,6 +117,14 @@ class _AgentsScreenState extends State<AgentsScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: 'Peek',
+            icon: const Icon(Icons.view_carousel_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const PeekScreen()),
+            ),
+          ),
           IconButton(
             tooltip: 'Workspaces',
             icon: const Icon(Icons.dashboard_outlined),
@@ -236,8 +247,7 @@ class _AgentsScreenState extends State<AgentsScreen> {
   }
 }
 
-/// Flat when there is one workspace; grouped under pinned headers when there
-/// are several, so a long list still tells you which workspace you are reading.
+/// Grouped by what each agent needs from you, under pinned headers.
 class _AgentList extends StatelessWidget {
   final List<AgentInfo> agents;
   const _AgentList({required this.agents});
@@ -246,7 +256,12 @@ class _AgentList extends StatelessWidget {
   Widget build(BuildContext context) {
     final groups = <String, List<AgentInfo>>{};
     for (final a in agents) {
-      groups.putIfAbsent(a.workspaceId, () => []).add(a);
+      final g = switch (a.status) {
+        AgentStatus.blocked => 'Needs you',
+        AgentStatus.working => 'Working',
+        _ => 'Quiet',
+      };
+      groups.putIfAbsent(g, () => []).add(a);
     }
 
     Widget card(AgentInfo a) => Padding(
@@ -254,28 +269,25 @@ class _AgentList extends StatelessWidget {
           child: _AgentCard(
             agent: a,
             held: context.read<AppState>().heldFor(a.paneId),
+            question: context.read<AppState>().questions[a.paneId],
+            steps: context.read<AppState>().stepProgress[a.paneId],
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => TerminalScreen(target: a.paneId),
+                builder: (_) => a.agent == 'claude'
+                    ? SessionScreen(paneId: a.paneId)
+                    : TerminalScreen(target: a.paneId),
               ),
             ),
           ),
         );
-
-    if (groups.length <= 1) {
-      return ListView(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-        children: agents.map(card).toList(),
-      );
-    }
 
     return CustomScrollView(
       slivers: [
         for (final entry in groups.entries) ...[
           SliverPersistentHeader(
             pinned: true,
-            delegate: _WorkspaceHeader(
+            delegate: _GroupHeader(
               label: entry.key,
               count: entry.value.length,
               background: Theme.of(context).scaffoldBackgroundColor,
@@ -295,13 +307,13 @@ class _AgentList extends StatelessWidget {
   }
 }
 
-class _WorkspaceHeader extends SliverPersistentHeaderDelegate {
+class _GroupHeader extends SliverPersistentHeaderDelegate {
   final String label;
   final int count;
   final Color background;
   final Color color;
 
-  _WorkspaceHeader({
+  _GroupHeader({
     required this.label,
     required this.count,
     required this.background,
@@ -321,7 +333,7 @@ class _WorkspaceHeader extends SliverPersistentHeaderDelegate {
       alignment: Alignment.centerLeft,
       padding: const EdgeInsets.symmetric(horizontal: 14),
       child: Text(
-        'workspace $label · $count',
+        '$label · $count',
         style: TextStyle(
           fontSize: 11,
           fontFamily: mono,
@@ -334,7 +346,7 @@ class _WorkspaceHeader extends SliverPersistentHeaderDelegate {
   }
 
   @override
-  bool shouldRebuild(_WorkspaceHeader old) =>
+  bool shouldRebuild(_GroupHeader old) =>
       old.label != label || old.count != count || old.background != background;
 }
 
@@ -404,45 +416,57 @@ class _AgentCard extends StatelessWidget {
   final AgentInfo agent;
   final VoidCallback onTap;
   final Duration? held;
+  final String? question;
+  final (int, int)? steps;
 
-  const _AgentCard({required this.agent, required this.onTap, this.held});
+  const _AgentCard({
+    required this.agent,
+    required this.onTap,
+    this.held,
+    this.question,
+    this.steps,
+  });
+
+  /// The line of a screen read that is the actual question.
+  static String _ask(String raw) {
+    final lines = raw.split('\n').where((l) => l.trim().isNotEmpty).toList();
+    return lines
+        .lastWhere(
+          (l) => l.trim().endsWith('?'),
+          orElse: () => lines.isEmpty ? '' : lines.first,
+        )
+        .trim();
+  }
 
   @override
   Widget build(BuildContext context) {
     final blocked = agent.status == AgentStatus.blocked;
     final look = lookFor(agent.status);
-    return Card(
+    final ask = question == null ? '' : _ask(question!);
+    final s = steps;
+    return Material(
+      color: blocked ? const Color(0xFF1A1414) : Pal.card,
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         child: Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border(
-              left: BorderSide(
-                color: blocked ? look.color : Colors.transparent,
-                width: 3,
-              ),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: blocked ? look.color.withValues(alpha: 0.4) : Pal.line,
             ),
           ),
-          padding: const EdgeInsets.fromLTRB(13, 12, 12, 12),
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: StatusDot(agent.status),
-                  ),
-                  const SizedBox(width: 8),
-                  // What the agent is doing is the only thing worth reading at
-                  // arm's length; which model it is barely matters.
                   Expanded(
                     child: Text(
                       agent.title.isNotEmpty ? agent.title : agent.agent,
-                      maxLines: 2,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 15,
@@ -451,34 +475,52 @@ class _AgentCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      StatusChip(agent.status),
-                      if (held != null) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          shortAge(held!),
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontFamily: mono,
-                            color: Theme.of(context).hintColor,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
+                  StatusPill(agent.status),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 3),
               Text(
-                '${agent.agent} · ${agent.repo} · ${agent.paneId}',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontFamily: mono,
-                  color: Theme.of(context).hintColor,
-                ),
+                [
+                  agent.repo,
+                  agent.agent,
+                  if (held != null) shortAge(held!),
+                ].join(' · '),
+                style: const TextStyle(fontSize: 12, color: Pal.dim),
               ),
+              if (blocked && ask.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.help_outline_rounded,
+                      size: 18,
+                      color: look.color,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        ask,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              if (s != null && s.$2 > 0) ...[
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(3),
+                  child: LinearProgressIndicator(
+                    value: s.$1 / s.$2,
+                    minHeight: 3,
+                    backgroundColor: const Color(0xFF0A0C0B),
+                    color: Pal.green,
+                  ),
+                ),
+              ],
             ],
           ),
         ),

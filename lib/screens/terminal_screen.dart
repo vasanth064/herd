@@ -24,7 +24,12 @@ import 'files_screen.dart';
 /// same way any terminal emulator drives it.
 class TerminalScreen extends StatefulWidget {
   final String target;
-  const TerminalScreen({super.key, required this.target});
+  final bool embedded;
+  const TerminalScreen({
+    super.key,
+    required this.target,
+    this.embedded = false,
+  });
 
   @override
   State<TerminalScreen> createState() => _TerminalScreenState();
@@ -298,7 +303,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
     final fontSize = profile?.fontSize ?? 12;
 
     return Scaffold(
-      appBar: _immersive
+      appBar: _immersive || widget.embedded
           ? null
           : AppBar(
         toolbarHeight: 44,

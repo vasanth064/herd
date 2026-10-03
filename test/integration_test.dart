@@ -98,7 +98,7 @@ void main() {
     // The dev box always has at least one agent running under herdr.
     expect(agents, isNotEmpty);
     for (final a in agents) {
-      expect(a.paneId, matches(RegExp(r'^w\d+:p\d+$')));
+      expect(a.paneId, matches(RegExp(r'^w\w+:p\d+$')));
       expect(a.workspaceId, isNotEmpty);
     }
     // Blocked agents must sort ahead of everything else.
@@ -177,5 +177,28 @@ void main() {
       c.connect(secret: keyFile.readAsStringSync()),
       throwsA(isA<HostKeyChangedException>()),
     );
+  }, skip: missing ? 'test sshd not running' : null);
+
+  test('binds a Claude pane to its session log and polls it', () async {
+    final claude = (await conn.agents())
+        .where((a) => a.agent == 'claude')
+        .firstOrNull;
+    if (claude == null) return;
+    final path = await conn.claudeTranscript(claude.paneId);
+    expect(path, endsWith('.jsonl'));
+
+    final first = await conn.pollSession(path, 0, claude.paneId, cap: 4096);
+    expect(first.size, greaterThan(0));
+    expect(first.next, lessThanOrEqualTo(first.size));
+    expect(first.screen, isNotEmpty);
+    final again = await conn.pollSession(path, first.next, claude.paneId);
+    expect(again.start, first.next);
+
+    final root = await conn.projectRoot(claude.cwd);
+    expect(Directory(root).existsSync(), isTrue);
+    expect(await conn.tskList(root), isA<List>());
+    expect(await conn.projectFiles(root), isNotEmpty);
+    expect(await conn.slashCommands(root), isA<List<String>>());
+    expect(await conn.listeningPorts(claude.paneId), isA<List>());
   }, skip: missing ? 'test sshd not running' : null);
 }
