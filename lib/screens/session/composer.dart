@@ -210,39 +210,6 @@ class ComposerState extends State<Composer> {
     }
   }
 
-  Future<void> _editReplies() async {
-    final store = context.read<AppState>().store;
-    final field = TextEditingController(text: store.quickReplies().join('\n'));
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (d) => AlertDialog(
-        title: const Text('Quick replies'),
-        content: TextField(
-          controller: field,
-          minLines: 3,
-          maxLines: 8,
-          decoration: const InputDecoration(helperText: 'One per line'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(d, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(d, true),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    await store.setQuickReplies([
-      for (final l in field.text.split('\n'))
-        if (l.trim().isNotEmpty) l.trim(),
-    ]);
-    if (mounted) setState(() {});
-  }
-
   Future<void> _voice() async {
     if (listening) {
       await _speech.stop();
@@ -279,7 +246,6 @@ class ComposerState extends State<Composer> {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<SessionController>();
-    final replies = context.read<AppState>().store.quickReplies();
     final sugg = _suggestions;
     return Container(
       color: Pal.bar,
@@ -322,22 +288,6 @@ class ComposerState extends State<Composer> {
                   ],
                 ),
               ),
-            SizedBox(
-              height: 34,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  for (final r in replies)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: GestureDetector(
-                        onLongPress: _editReplies,
-                        child: Pill(r, onTap: () => c.send(r)),
-                      ),
-                    ),
-                ],
-              ),
-            ),
             if (attachments.isNotEmpty || uploading)
               Padding(
                 padding: const EdgeInsets.only(top: 8),

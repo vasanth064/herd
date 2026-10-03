@@ -12,7 +12,7 @@ import 'summary_tab.dart';
 import 'tasks_tab.dart';
 import 'widgets.dart';
 
-enum SessionTab { summary, refs, app, tasks }
+enum SessionTab { summary, refs, app, tasks, terminal }
 
 /// One agent pane as a summary: what it is working towards, its steps, what
 /// it needs from you, and what it produced. The terminal stays one tap away.
@@ -64,15 +64,6 @@ class _SessionScreenState extends State<SessionScreen>
     appPath = path;
     tab = SessionTab.app;
   });
-
-  Future<void> _openTerminal() async {
-    ctl.pause();
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => TerminalScreen(target: widget.paneId)),
-    );
-    if (mounted) ctl.start();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -142,7 +133,6 @@ class _SessionScreenState extends State<SessionScreen>
                   tab: tab,
                   refs: c.digest.links.length + c.digest.files.length,
                   onTab: (t) => setState(() => tab = t),
-                  onTerminal: _openTerminal,
                 ),
                 if (c.error != null && !c.loaded)
                   Expanded(
@@ -159,6 +149,10 @@ class _SessionScreenState extends State<SessionScreen>
                         initialPath: appPath,
                       ),
                       SessionTab.tasks => const TasksTab(),
+                      SessionTab.terminal => TerminalScreen(
+                        target: widget.paneId,
+                        embedded: true,
+                      ),
                     },
                   ),
               ],
@@ -174,12 +168,10 @@ class _Tabs extends StatelessWidget {
   final SessionTab tab;
   final int refs;
   final ValueChanged<SessionTab> onTab;
-  final VoidCallback onTerminal;
   const _Tabs({
     required this.tab,
     required this.refs,
     required this.onTab,
-    required this.onTerminal,
   });
 
   @override
@@ -290,7 +282,12 @@ class _Tabs extends StatelessWidget {
             () => onTab(SessionTab.tasks),
           ),
           const SizedBox(width: 6),
-          chip(Icons.terminal_rounded, 'Terminal', false, onTerminal),
+          chip(
+            Icons.terminal_rounded,
+            'Terminal',
+            tab == SessionTab.terminal,
+            () => onTab(SessionTab.terminal),
+          ),
         ],
       ),
     );

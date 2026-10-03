@@ -104,8 +104,7 @@ void main() {
     expect(find.text('WORKING TOWARDS'), findsOneWidget);
     expect(find.text('62%'), findsOneWidget);
     expect(find.textContaining('@ files'), findsOneWidget);
-    expect(find.text('Continue'), findsOneWidget);
-    expect(find.text("What's next?"), findsOneWidget);
+    expect(find.text('Continue'), findsNothing);
   });
 
   testWidgets('a question on screen replaces the composer', (tester) async {
