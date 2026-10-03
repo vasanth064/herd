@@ -2,7 +2,26 @@ import 'package:flutter/material.dart';
 
 import 'models.dart';
 
-const mono = 'monospace';
+const mono = 'JetBrainsMono';
+
+/// Code must read as typed: `=>` stays two characters, not an arrow.
+const noLigatures = [FontFeature.disable('calt'), FontFeature.disable('liga')];
+
+/// The session UI's palette, shared with the design prototype.
+class Pal {
+  static const bg = Color(0xFF0D0F0E);
+  static const bar = Color(0xFF131614);
+  static const card = Color(0xFF171A19);
+  static const sunk = Color(0xFF0F1211);
+  static const line = Color(0xFF232826);
+  static const pop = Color(0xFF1E2220);
+  static const text = Color(0xFFE6EAE8);
+  static const dim = Color(0xFF8D9792);
+  static const green = Color(0xFF4CAF50);
+  static const red = Color(0xFFFF5252);
+  static const amber = Color(0xFFFFC107);
+  static const cyan = Color(0xFF26C6DA);
+}
 
 class StatusLook {
   final Color color;
@@ -36,6 +55,7 @@ ThemeData buildTheme(Brightness b) {
   return ThemeData(
     colorScheme: scheme,
     useMaterial3: true,
+    fontFamily: 'Inter',
     scaffoldBackgroundColor: dark ? const Color(0xFF0D0F0E) : scheme.surface,
     appBarTheme: AppBarTheme(
       backgroundColor: dark ? const Color(0xFF131614) : scheme.surface,

@@ -44,6 +44,22 @@ class Native {
 
   static Future<void> stopService() => _call('service.stop');
 
+  /// PNG of a region of the window in physical pixels, or null where the
+  /// platform cannot capture it.
+  static Future<Uint8List?> capture(Rect r) async {
+    if (!available) return null;
+    try {
+      return await _channel.invokeMethod<Uint8List>('capture', {
+        'x': r.left.round(),
+        'y': r.top.round(),
+        'w': r.width.round(),
+        'h': r.height.round(),
+      });
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
   static Future<void> notify({
     required String pane,
     required String title,

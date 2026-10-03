@@ -34,17 +34,25 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
 
   BuildContext? _noticeCtx;
 
+  /// Hide can arrive before the dialog has built — a backgrounded app draws
+  /// no frames while the user is in the browser finishing the check.
+  bool _noticeWanted = false;
+
   /// A Tailscale SSH host holds the handshake open while it waits for the
   /// browser check, so this shows up mid-connect and closes itself once the
   /// handshake finishes either way.
   void _showAuthNotice(String message) {
     if (!mounted || _noticeCtx != null) return;
+    _noticeWanted = true;
     final url = firstUrl(message);
     showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (dialog) {
         _noticeCtx = dialog;
+        if (!_noticeWanted) {
+          WidgetsBinding.instance.addPostFrameCallback((_) => _hideAuthNotice());
+        }
         return AlertDialog(
           title: const Text('One more check'),
           content: Column(
@@ -85,6 +93,7 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
   }
 
   void _hideAuthNotice() {
+    _noticeWanted = false;
     final c = _noticeCtx;
     _noticeCtx = null;
     if (c != null && Navigator.canPop(c)) Navigator.pop(c);

@@ -156,27 +156,29 @@ void main() {
 
     final title = tester.widget<Text>(find.text('Revert the migrations'));
     expect(title.style?.fontSize, 15);
-    expect(find.text('claude · Strix · w1:p1'), findsOneWidget);
+    expect(find.text('Strix · claude'), findsOneWidget);
 
     // No title to lead with, so the agent's name takes the headline.
     expect(find.text('codex'), findsOneWidget);
   });
 
-  testWidgets('agents screen groups by workspace when there are several',
+  testWidgets('agents screen groups by what each agent needs',
       (tester) async {
     final app = await _state();
     app.active = Profile(id: '1', name: 'box', host: 'h', username: 'v');
     app.state = ConnState.connected;
     app.agents = [
       _agent('one', AgentStatus.idle, workspace: 'w1', pane: 'w1:p1'),
-      _agent('two', AgentStatus.idle, workspace: 'w3', pane: 'w3:p1'),
+      _agent('two', AgentStatus.blocked, workspace: 'w3', pane: 'w3:p1'),
     ];
+    app.questions['w3:p1'] = 'Bash command\nDo you want to proceed?\n1. Yes';
 
     await tester.pumpWidget(_wrap(app, const AgentsScreen()));
     await tester.pumpAndSettle();
 
-    expect(find.text('workspace w1 · 1'), findsOneWidget);
-    expect(find.text('workspace w3 · 1'), findsOneWidget);
+    expect(find.text('Needs you · 1'), findsOneWidget);
+    expect(find.text('Quiet · 1'), findsOneWidget);
+    expect(find.text('Do you want to proceed?'), findsOneWidget);
   });
 
   testWidgets('ports is a top-bar button, not buried in the menu',
@@ -342,6 +344,18 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('One more check'), findsOneWidget);
 
+    app.hideAuthNotice!();
+    await tester.pumpAndSettle();
+    expect(find.text('One more check'), findsNothing);
+  });
+
+  testWidgets('an auth notice hidden before it draws does not linger',
+      (tester) async {
+    final app = await _state();
+    await tester.pumpWidget(_wrap(app, const ProfilesScreen()));
+    await tester.pumpAndSettle();
+
+    app.showAuthNotice!('# To authenticate, visit: https://login.tailscale.com/a/f');
     app.hideAuthNotice!();
     await tester.pumpAndSettle();
     expect(find.text('One more check'), findsNothing);

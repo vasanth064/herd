@@ -61,6 +61,24 @@ class Store {
   Future<void> saveKnownHosts(Map<String, String> hosts) =>
       prefs.setString(_hostsKey, jsonEncode(hosts));
 
+  List<String> queue(String key) => prefs.getStringList('queue.$key') ?? [];
+  Future<void> setQueue(String key, List<String> q) => q.isEmpty
+      ? prefs.remove('queue.$key')
+      : prefs.setStringList('queue.$key', q);
+
+  List<String> quickReplies() =>
+      prefs.getStringList('quick_replies') ??
+      const [
+        'Continue',
+        "What's next?",
+        'Run the tests',
+        'Commit this',
+        'Check now',
+      ];
+
+  Future<void> setQuickReplies(List<String> r) =>
+      prefs.setStringList('quick_replies', r);
+
   String? themeMode() => prefs.getString(_themeKey);
   Future<void> setThemeMode(String mode) => prefs.setString(_themeKey, mode);
 
