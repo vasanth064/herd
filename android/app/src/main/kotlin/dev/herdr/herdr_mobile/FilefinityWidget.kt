@@ -10,10 +10,16 @@ import android.widget.RemoteViews
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import java.text.NumberFormat
+import java.util.Locale
 import kotlin.concurrent.thread
 
 class FilefinityWidget : AppWidgetProvider() {
+    private fun short(n: Long): String = when {
+        n < 1_000 -> "$n"
+        n < 1_000_000 -> String.format(Locale.US, "%.2fk", n / 1e3)
+        else -> String.format(Locale.US, "%.2fM", n / 1e6)
+    }
+
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
         val done = goAsync()
         thread {
@@ -26,10 +32,9 @@ class FilefinityWidget : AppWidgetProvider() {
                     c.readTimeout = 10_000
                     val d = JSONObject(c.inputStream.bufferedReader().readText())
                         .getJSONObject("data")
-                    val n = NumberFormat.getIntegerInstance()
-                    views.setTextViewText(R.id.ff_posts, n.format(d.getLong("totalPosts")))
-                    views.setTextViewText(R.id.ff_downloads, n.format(d.getLong("totalDownloads")))
-                    views.setTextViewText(R.id.ff_users, n.format(d.getLong("totalUsers")))
+                    views.setTextViewText(R.id.ff_posts, short(d.getLong("totalPosts")))
+                    views.setTextViewText(R.id.ff_downloads, short(d.getLong("totalDownloads")))
+                    views.setTextViewText(R.id.ff_users, short(d.getLong("totalUsers")))
                 } catch (e: Exception) {
                     views.setTextViewText(R.id.ff_title, "Filefinity · offline")
                 }
